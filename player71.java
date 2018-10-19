@@ -9,6 +9,7 @@ import java.util.Random;
 import java.util.Properties;
 import java.util.Arrays;
 
+// Based on The CMA Evolution Strategy: A Tutorial
 public class player71 implements ContestSubmission
 {
 	Random rnd_;
@@ -16,9 +17,14 @@ public class player71 implements ContestSubmission
     private int evaluations_limit_;
 
     // Main parameters
-    private double sigma = 0.5; // Mutation standard deviation
+    private double sigma = 0.5; // Initial mutation standard deviation
     private int lambda = 100; // Number of samples per iteration
-    private int mu = 25; // Number of samples selected
+    private int mu = 50; // Number of samples selected
+
+    // Booleans for function properties
+    private boolean isMultimodal = false;
+    private boolean hasStructure = false;
+    private boolean isSeparable = false;
 	
 	public player71()
 	{
@@ -37,22 +43,19 @@ public class player71 implements ContestSubmission
 		evaluation_ = evaluation;
 		
 		// Get evaluation properties
-		Properties props = evaluation.getProperties();
+		Properties prop_s = evaluation.getProperties();
         // Get evaluation limit
-        evaluations_limit_ = Integer.parseInt(props.getProperty("Evaluations"));
+        evaluations_limit_ = Integer.parseInt(prop_s.getProperty("Evaluations"));
 		// Property keys depend on specific evaluation
-		// E.g. double param = Double.parseDouble(props.getProperty("property_name"));
-        boolean isMultimodal = Boolean.parseBoolean(props.getProperty("Multimodal"));
-        boolean hasStructure = Boolean.parseBoolean(props.getProperty("Regular"));
-        boolean isSeparable = Boolean.parseBoolean(props.getProperty("Separable"));
+		// E.g. double param = Double.parseDouble(prop_s.getProperty("property_name"));
+        isMultimodal = Boolean.parseBoolean(prop_s.getProperty("Multimodal"));
+        hasStructure = Boolean.parseBoolean(prop_s.getProperty("Regular"));
+        isSeparable = Boolean.parseBoolean(prop_s.getProperty("Separable"));
 
 		// Do sth with property values, e.g. specify relevant settings of your algorithm
-        if(!hasStructure){
-        	lambda = 2000;
-        }
         if(!isMultimodal){
-        	lambda = 50;
-			mu = 6;
+        	lambda = 8;
+			mu = 4;
         }
     }
     
@@ -70,33 +73,39 @@ public class player71 implements ContestSubmission
 		}
 		for (int i = 0 ; i < mu; i++)
 			weights[i] /= sum;
-		double mueff = Math.pow(sum, 2)/sum_squared;
-		double cc = (4+mueff/10) / (14 + 2*mueff/10);
-		double cs = (mueff+2) / (15+mueff);
-		double c1 = 2 / (Math.pow(11.3, 2)+mueff);
-		double cmu = Math.min(1-c1, 2 * (mueff-2+1/mueff) / (Math.pow(12, 2) + mueff));
-		double damps = 1 + 2*Math.max(0, Math.sqrt((mueff-1)/(11))-1) + cs;
-	
-		double chiN = Math.pow(10, 0.5*(1-1/(40)+1/(2100)));
+		double mu_eff = Math.pow(sum, 2)/sum_squared;
+		double c_c = (4+mu_eff/10) / (14 + 2*mu_eff/10);
+		double c_s = (mu_eff+2) / (15+mu_eff);
+		double c_1 = 2 / (Math.pow(11.3, 2)+mu_eff);
+		double c_mu = Math.min(1-c_1, 2 * (mu_eff-2+1/mu_eff) / (Math.pow(12, 2) + mu_eff));
+		double damp_s = 1 + 2*Math.max(0, Math.sqrt((mu_eff-1)/(11))-1) + c_s;
+		double chiN = Math.pow(10, 0.5)*(1-1/40+1/2100);
 
 		// Starting matrices
-		SimpleMatrix pc = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
-		SimpleMatrix ps = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
-		SimpleMatrix covariance = SimpleMatrix.diag(new double[]{1,1,1,1,1,1,1,1,1,1});
-		SimpleMatrix invsqrt_covariance = SimpleMatrix.diag(new double[]{1,1,1,1,1,1,1,1,1,1});
-		SimpleMatrix mean = SimpleMatrix.random_DDRM(10,1,-5,5, rnd_);
+		SimpleMatrix p_c = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
+		SimpleMatrix p_s = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
+		SimpleMatrix b = SimpleMatrix.identity(10);
+		SimpleMatrix d = SimpleMatrix.identity(10);
+		SimpleMatrix covariance = SimpleMatrix.identity(10);
+		SimpleMatrix xmean = SimpleMatrix.random_DDRM(10,1,-5,5, rnd_);
 
 		// Initialize counters
 		int evals = 0;
+		int current_evals = 0;
 		double best_score = 0;
+
+		double best_per_generation[] = new double[10];
 
 		// Iterate until evaluation limit is reached
         while(evals<evaluations_limit_ - lambda){
         	// Generate offspring
-        	//System.out.println(sigma);
         	Individual offspring[] = new Individual[lambda];
         	for (int i = 0; i < lambda; i++){
-        		double new_genotype[] = ((DMatrixD1)mean.plus(SimpleMatrix.randomNormal(covariance, rnd_).scale(sigma)).getMatrix()).getData();
+        		double random_normals[] = new double[10];
+        		for (int j = 0; j < 10; j++)
+        			random_normals[j] = rnd_.nextGaussian();
+        		SimpleMatrix random_normal_vec = new SimpleMatrix(10,1,true, random_normals);
+        		double new_genotype[] = ((DMatrixD1)xmean.plus(b.mult(d).mult(random_normal_vec).scale(sigma)).getMatrix()).getData();
         		for (int j = 0; j < 10; j++)
         			new_genotype[j] = Math.min(5, Math.max(-5, new_genotype[j]));
         		SimpleMatrix genotype = new SimpleMatrix(10, 1, true, new_genotype); 
@@ -105,36 +114,47 @@ public class player71 implements ContestSubmission
         			best_score = fitness;
         			//System.out.println("wow");
         			//System.out.println(best_score);
+        			//System.out.println(evals);
         		}
-        		Individual child = new Individual(genotype, fitness);
+        		Individual child = new Individual(genotype, fitness, random_normal_vec);
         		offspring[i] = child;
         		evals++;
+        		current_evals++;
         	}
         	Arrays.sort(offspring);
 
-        	// Update mean
-        	SimpleMatrix old_mean = mean;
-        	mean = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
+        	for (int i = 0; i < 9; i++)
+                best_per_generation[i] = best_per_generation[i+1];
+            best_per_generation[9] = offspring[lambda-1].getFitness();
+
+        	// Update xmean
+        	xmean = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
         	for (int i = 0; i < mu; i++)
-        		mean = mean.plus(offspring[lambda - 1 - i].getGenotype().scale(weights[i]));
+        		xmean = xmean.plus(offspring[lambda - 1 - i].getGenotype().scale(weights[i]));
+        	SimpleMatrix zmean = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
+        	for (int i = 0; i < mu; i++)
+        		zmean = zmean.plus(offspring[lambda - 1 - i].getRandomNormalVec().scale(weights[i])); 
 
         	// Update evolution paths
-        	ps = ps.scale(1-cs).plus(invsqrt_covariance.mult(mean.minus(old_mean).divide(sigma)).scale(Math.sqrt(cs*(2-cs)*mueff)));
-        	int hsig = ps.normF()/Math.sqrt(1-Math.pow(1-cs, 2*evals/lambda))/chiN < 1.4 + 2/11 ? 1 : 0;
-        	pc = pc.scale(1-cc).plus(mean.minus(old_mean).divide(sigma).scale(Math.sqrt(cc*(2-cc)*mueff)).scale(hsig));
+        	p_s = p_s.scale(1-c_s).plus(b.mult(zmean).scale(Math.sqrt(c_s*(2-c_s)*mu_eff)));
+        	int hsig = p_s.normF()/Math.sqrt(1-Math.pow(1-c_s, 2*evals/lambda))/chiN < 1.4 + 2/11 ? 1 : 0;
+        	p_c = p_c.scale(1-c_c).plus(b.mult(d).mult(zmean).scale(Math.sqrt(c_c*(2-c_c)*mu_eff)).scale(hsig));
 
-        	// Calculate artmp
-        	SimpleMatrix artmp = offspring[lambda - 1].getGenotype().minus(old_mean);
+			// Update covariance matrix        	
+        	SimpleMatrix temp = offspring[lambda - 1].getRandomNormalVec();
         	for (int i = 1; i < mu; i++){
-        		artmp = artmp.concatColumns(offspring[lambda - 1 - i].getGenotype().minus(old_mean));
+        		temp = temp.concatColumns(offspring[lambda - 1 - i].getRandomNormalVec());
         	}
-        	artmp = artmp.scale(1/sigma);
+        	temp = b.mult(d).mult(temp);
+        	SimpleMatrix rank_one_update = p_c.mult(p_c.transpose()).plus(covariance.scale(c_c*(2-c_c)*(1-hsig))).scale(c_1);
+          	SimpleMatrix rank_mu_update = temp.mult(SimpleMatrix.diag(weights)).mult(temp.transpose()).scale(c_mu);
+        	covariance = covariance.scale(1-c_1-c_mu).plus(rank_one_update).plus(rank_mu_update);
 
-        	// Update covariance matrix
-        	covariance = covariance.scale(1-c1-cmu).plus(pc.mult(pc.transpose()).plus(covariance.scale(cc*(2-cc)*hsig)).scale(c1)).plus(artmp.mult(SimpleMatrix.diag(weights)).mult(artmp.transpose()));
-
-        	// Update sigma
-        	sigma = sigma * Math.exp((cs/damps)*(ps.normF()/chiN - 1));
+        	// Update sigma (including weird hack that somehow makes Schaffers F7 work)
+        	if (isMultimodal && hasStructure)
+        		sigma = Math.exp((c_s/damp_s)*(p_s.normF()/chiN - 1));
+        	else
+        		sigma = sigma * Math.exp((c_s/damp_s)*(p_s.normF()/chiN - 1));
 
         	// Enforce symmetry
     		covariance = covariance.plus(covariance.transpose()).scale(0.5);
@@ -143,12 +163,26 @@ public class player71 implements ContestSubmission
     		SimpleEVD covariance_evd = covariance.eig();
     		double eigenvalues[] = new double[10];
     		for (int i = 0; i < 10; i++)
-    			eigenvalues[i] = covariance_evd.getEigenvalue(i).getReal();
-    		SimpleMatrix b = (SimpleMatrix)covariance_evd.getEigenVector(0);
+    			eigenvalues[i] = Math.sqrt(covariance_evd.getEigenvalue(i).getReal());
+    		b = (SimpleMatrix)covariance_evd.getEigenVector(0);
     		for (int i = 1; i < 10; i++) {
 				b = b.concatColumns((SimpleMatrix)covariance_evd.getEigenVector(i));		
 			}
-			invsqrt_covariance = b.mult(SimpleMatrix.diag(eigenvalues).invert()).mult(b.transpose());
+			d = SimpleMatrix.diag(eigenvalues);
+
+			
+			// Restart if global optimum not found after 50000 evaluations for Katsuura
+			// Restart if BentCigar not climbing fast enough
+			if ((current_evals > 50000 && !hasStructure) || (best_score < 9.9999 && current_evals > 1500 && !isMultimodal)){
+				p_c = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
+				p_s = new SimpleMatrix(10,1,true, new double[]{0,0,0,0,0,0,0,0,0,0});
+				b = SimpleMatrix.identity(10);
+				d = SimpleMatrix.identity(10);
+				covariance = SimpleMatrix.identity(10);
+				xmean = SimpleMatrix.random_DDRM(10,1,-5,5, rnd_);
+				best_score = 0;
+				current_evals = 0;
+			}
         }
 	}
 }
